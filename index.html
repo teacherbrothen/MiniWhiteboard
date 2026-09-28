@@ -65,9 +65,9 @@
             min-width: 180px;
         }
 
-        /* Launch Banner / Button */
+        /* Launch Banner */
         #launch-container {
-            padding: 30px 10px;
+            padding: 30px 14px;
             border: 2px dashed #cbd5e1;
             border-radius: 12px;
             background: #f8fafc;
@@ -79,7 +79,7 @@
             color: white;
             border: none;
             padding: 16px 36px;
-            font-size: 1.2rem;
+            font-size: 1.15rem;
             font-weight: bold;
             border-radius: 10px;
             cursor: pointer;
@@ -90,6 +90,37 @@
             background-color: #1d4ed8;
             transform: translateY(-1px);
         }
+
+        .btn-fallback-file {
+            background: transparent;
+            color: #64748b;
+            border: 1px solid #cbd5e1;
+            padding: 8px 16px;
+            font-size: 0.88rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 14px;
+        }
+        .btn-fallback-file:hover {
+            background: #f1f5f9;
+            color: #334155;
+        }
+
+        /* Diagnostic Alert Box */
+        #error-banner {
+            display: none;
+            background: #fef2f2;
+            border: 2px solid #ef4444;
+            color: #991b1b;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 0.92rem;
+            margin-bottom: 18px;
+            text-align: left;
+            line-height: 1.5;
+        }
+        #error-banner strong { display: block; margin-bottom: 4px; }
 
         /* Live Camera View Area */
         #active-camera-box {
@@ -133,7 +164,7 @@
         .btn-snap:hover { background-color: #dc2626; }
         .btn-snap:disabled { background-color: #94a3b8; cursor: not-allowed; }
 
-        /* The 8.5 x 11 Portrait Viewport Container */
+        /* 8.5 x 11 Portrait Frame */
         .viewport-wrapper {
             position: relative;
             width: 100%;
@@ -156,7 +187,6 @@
             object-fit: cover;
         }
 
-        /* Transparent Paper Alignment Guides */
         .paper-guide-overlay {
             position: absolute;
             inset: 16px;
@@ -248,9 +278,16 @@
         <input type="text" id="student-name" placeholder="e.g. Alex M.">
     </div>
 
+    <!-- Diagnostic Banner (Explains exact issue to student) -->
+    <div id="error-banner"></div>
+
     <!-- Step 1: Initial Launch Button -->
     <div id="launch-container">
         <button class="btn-launch" onclick="launchScanner()">📷 Scan Your Paper</button>
+        <div>
+            <button class="btn-fallback-file" onclick="document.getElementById('file-fallback').click()">📁 or Upload Photo from Computer</button>
+            <input type="file" id="file-fallback" accept="image/*" style="display: none;" onchange="handleFileFallback(event)">
+        </div>
     </div>
 
     <!-- Step 2: Live Viewport with 8.5x11 Portrait Guide -->
@@ -284,20 +321,26 @@
     let videoStream = null;
 
     async function launchScanner() {
-        document.getElementById("launch-container").style.display = "none";
-        document.getElementById("active-camera-box").style.display = "flex";
+        hideError();
+
+        // 1. Check for basic camera support
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showError("Your browser or device does not support webcam capture. Please use the 'Upload Photo' option below.");
+            return;
+        }
 
         try {
-            // 1. Request camera access FIRST so the browser unlocks real device names
+            // Request minimal stream first to reliably unlock permissions
             const initialStream = await navigator.mediaDevices.getUserMedia({
-                video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+                video: true,
                 audio: false
             });
 
-            // 2. Now that permissions are active, populate the dropdown with real names
+            document.getElementById("launch-container").style.display = "none";
+            document.getElementById("active-camera-box").style.display = "flex";
+
             await populateCameraList();
 
-            // 3. Switch to the preferred built-in camera if OBS was grabbed initially
             const select = document.getElementById("camera-select");
             const preferredId = select.value;
             const currentTrack = initialStream.getVideoTracks()[0];
@@ -314,8 +357,40 @@
             }
         } catch (err) {
             console.error("Camera access error:", err);
-            alert("Camera access denied or unavailable. Please check browser permissions.");
+            handleCameraError(err);
         }
+    }
+
+    function handleCameraError(err) {
+        if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+            showError(
+                "<strong>Camera is in use by another app (like Zoom)!</strong>" +
+                "1. Click 'Stop Video' in Zoom for 10 seconds.<br>" +
+                "2. Click 'Scan Your Paper' again.<br>" +
+                "3. Turn your Zoom video back on when finished."
+            );
+        } else if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+            showError(
+                "<strong>Camera access was blocked by your browser:</strong>" +
+                "1. Click the lock/tune icon on the left side of the address bar.<br>" +
+                "2. Toggle 'Camera' to <strong>Allow</strong>.<br>" +
+                "3. Refresh the page."
+            );
+        } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+            showError("<strong>No camera found:</strong> Please check that your webcam is connected or use the 'Upload Photo' option below.");
+        } else {
+            showError(`<strong>Camera Error (${err.name}):</strong> ${err.message || 'Unable to open camera.'}`);
+        }
+    }
+
+    function showError(htmlMsg) {
+        const errBox = document.getElementById("error-banner");
+        errBox.innerHTML = htmlMsg;
+        errBox.style.display = "block";
+    }
+
+    function hideError() {
+        document.getElementById("error-banner").style.display = "none";
     }
 
     async function populateCameraList() {
@@ -336,7 +411,6 @@
                 option.text = device.label || `Camera ${index + 1}`;
 
                 const lbl = (device.label || "").toLowerCase();
-                // Prioritize built-in Mac/PC webcams over OBS virtual cameras
                 if ((lbl.includes("macbook") || lbl.includes("facetime") || lbl.includes("built-in") || lbl.includes("integrated")) && !lbl.includes("obs")) {
                     preferredIndex = index;
                 }
@@ -363,27 +437,21 @@
             videoStream = null;
         }
 
-        const constraints = {
-            video: chosenId
-                ? { deviceId: { exact: chosenId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-                : { width: { ideal: 1920 }, height: { ideal: 1080 } },
-            audio: false
-        };
-
         try {
-            videoStream = await navigator.mediaDevices.getUserMedia(constraints);
+            videoStream = await navigator.mediaDevices.getUserMedia({
+                video: chosenId ? { deviceId: { exact: chosenId } } : true,
+                audio: false
+            });
             video.srcObject = videoStream;
             document.getElementById("btn-snap").disabled = false;
         } catch (err) {
-            console.warn("Exact camera constraint failed, retrying ideal:", err);
+            console.warn("Retrying camera without exact ID constraint:", err);
             try {
-                videoStream = await navigator.mediaDevices.getUserMedia({
-                    video: { deviceId: chosenId ? { ideal: chosenId } : undefined }
-                });
+                videoStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
                 video.srcObject = videoStream;
                 document.getElementById("btn-snap").disabled = false;
             } catch (fallbackErr) {
-                alert("Could not switch to that camera. Please verify device connection.");
+                handleCameraError(fallbackErr);
             }
         }
     }
@@ -412,10 +480,24 @@
 
     function captureDocument() {
         const video = document.getElementById("webcam");
+        renderToLetterSheet(video, video.videoWidth, video.videoHeight);
+    }
+
+    function handleFileFallback(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const img = new Image();
+        img.onload = () => {
+            renderToLetterSheet(img, img.width, img.height);
+        };
+        img.src = URL.createObjectURL(file);
+    }
+
+    function renderToLetterSheet(sourceElement, sourceWidth, sourceHeight) {
         const canvas = document.getElementById("preview-canvas");
         const ctx = canvas.getContext("2d");
 
-        // Standard 8.5 x 11 high-res dimensions (Letter Portrait)
         const targetWidth = 850;
         const targetHeight = 1100;
 
@@ -426,12 +508,11 @@
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, targetWidth, targetHeight);
 
-        // Header margin for Student Identification (60px)
+        // Header margin for student name
         const headerHeight = 60;
         ctx.fillStyle = "#f8fafc";
         ctx.fillRect(0, 0, targetWidth, headerHeight);
 
-        // Header text
         const sName = document.getElementById("student-name").value.trim() || "Student Work";
         const dateStr = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -443,36 +524,34 @@
         ctx.font = "16px 'Segoe UI', sans-serif";
         ctx.textAlign = "right";
         ctx.fillText(dateStr, targetWidth - 24, 38);
-        ctx.textAlign = "start"; // reset
+        ctx.textAlign = "start";
 
-        // Center-crop video feed to match the 8.5 x 11 frame
+        // Center-crop into 8.5 x 11
         const destY = headerHeight;
         const destHeight = targetHeight - headerHeight;
         const destWidth = targetWidth;
 
         const targetAspect = destWidth / destHeight;
-        const videoAspect = video.videoWidth / video.videoHeight;
+        const sourceAspect = sourceWidth / sourceHeight;
 
         let sx, sy, sWidth, sHeight;
 
-        if (videoAspect > targetAspect) {
-            sHeight = video.videoHeight;
-            sWidth = video.videoHeight * targetAspect;
-            sx = (video.videoWidth - sWidth) / 2;
+        if (sourceAspect > targetAspect) {
+            sHeight = sourceHeight;
+            sWidth = sourceHeight * targetAspect;
+            sx = (sourceWidth - sWidth) / 2;
             sy = 0;
         } else {
-            sWidth = video.videoWidth;
-            sHeight = video.videoWidth / targetAspect;
+            sWidth = sourceWidth;
+            sHeight = sourceWidth / targetAspect;
             sx = 0;
-            sy = (video.videoHeight - sHeight) / 2;
+            sy = (sourceHeight - sHeight) / 2;
         }
 
-        // Apply contrast booster to make faint graphite/ink pop
         ctx.filter = "contrast(1.4) brightness(1.03)";
-        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, destY, destWidth, destHeight);
-        ctx.filter = "none"; // reset
+        ctx.drawImage(sourceElement, sx, sy, sWidth, sHeight, 0, destY, destWidth, destHeight);
+        ctx.filter = "none";
 
-        // Header bottom border
         ctx.strokeStyle = "#cbd5e1";
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -480,7 +559,6 @@
         ctx.lineTo(targetWidth, headerHeight);
         ctx.stroke();
 
-        // Reveal canvas preview and action buttons
         canvas.style.display = "block";
         document.getElementById("actions-box").style.display = "flex";
         document.getElementById("copy-status").innerText = "";
